@@ -1,15 +1,25 @@
 from argument_processing import arguments_process
-from preprocessing import statistics, filtering
+from preprocessing import statistics, trimming, filtering
 import sys
+import os
+from pathlib import Path
 
 def main():
+    output_dir = Path('output')
+    output_dir.mkdir(parents=True, exist_ok=True)
     args = arguments_process(sys.argv)
 
-    print('Gathering filtering statistics')
-    nanostatistics = statistics(args['file'])
+    if args['statistics']:
+        print('Gathering filtering statistics')
+        statistics(args['file'], output_dir)
 
-    print('Filtering low quality reads')
-    filtering(args['file'],nanostatistics)
+    if args['trimming']:
+        print('Trimming reads')
+        trimming(args['file'], output_dir)
+
+    if args['filtering']:
+        print('Filtering low quality reads')
+        filtering(args['file'], output_dir)
 
 
 

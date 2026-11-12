@@ -1,15 +1,20 @@
 import subprocess
 import gzip
+from statistics import median
+import csv
 from Bio import SeqIO
 from nanomath import ave_qual
+import os
 
 
-def statistics(file):
+
+def statistics(file, output):
     '''
-    Calculate the mean Phred quality score distribution, N50 statistic and average read length.
+    Calculate the mean Phred quality score distribution, N50 and other read statistics
 
     :param file: Path to the input file
-    :return: Dictionary with percentages of reads with each Phred quality, N50 statistic and the average read length
+    :param output: Path to the output file
+    :return: None. Saves the statistics to a TSV file
     '''
 
     qualities = [10,11,12,13,14,15,16,17,18]
@@ -33,37 +38,55 @@ def statistics(file):
                     phred_count[q] += 1
 
     mean_length = round(total_length / total_reads, 2)
+    median_length = median(lengths)
     N50 = calculate_n50(lengths)
 
-    phred_retention = {q: 0 for q in qualities}
-    for q in qualities:
-        phred_retention[q] = round((phred_count[q] / total_reads) * 100, 2)
+    stats = {}
 
-    stats = phred_retention
+    stats['total_bases'] = total_length
     stats['total_reads'] = total_reads
     stats['mean_read_length'] = mean_length
-    stats['total_bases'] = total_length
+    stats['median_read_length'] = median_length
     stats['N50'] = N50
 
-    return stats
+    for q in qualities:
+        stats[f'Q{q}'] = str(round((phred_count[q] / total_reads) * 100, 2)) + '%'
+
+
+    with open(output / 'statistics.tsv','w', newline='') as file:
+        writer = csv.writer(file, delimiter="\t")
+        writer.writerows(stats.items())
 
 
 
-def filtering(file, stats):
+def trimming(file, output):
     '''
-    Filter reads based on the selected minimum Phred quality threshold using Chopper.
+    Trimms the sequence using Porechop_abi
 
     :param file: Path to the input file
-    :param stats: Dictionary containing read quality statistics.
+    :param output: Path to the output file
+    :return: None. Saves the trimmed reads to a compressed FASTQ file
+    '''
+
+    subprocess.run(f'porechop_abi -abi -i {file} -o {output / "sequence_trimmed.fastq.gz"}',
+                    shell=True, check=True)
+
+
+
+def filtering(file, output):
+    '''
+    Filter reads based on the selected minimum Phred quality of 10 using Chopper.
+
+    :param file: Path to the input file
+    :param output: Path to the output file
     :return: None. Saves the filtered reads to a compressed FASTQ file.
     '''
-    benchmarks = filtering_benchmarks(stats)
 
     if file.suffix == '.gz':
-        subprocess.run(f'gunzip -c {file} | chopper -q {benchmarks['phred']} | gzip > sequence_filtered.fastq.gz',
+        subprocess.run(f'gunzip -c {file} | chopper -q 10 | gzip > {output / "sequence_filtered.fastq.gz"}',
                    shell=True, check=True)
     else:
-        subprocess.run(f'cat -c {file} | chopper -q {benchmarks['phred']} | gzip > sequence_filtered.fastq.gz',
+        subprocess.run(f'cat -c {file} | chopper -q 10 | gzip > {output / "sequence_filtered.fastq.gz"}',
                    shell=True, check=True)
 
 
@@ -79,23 +102,6 @@ def open_fastq(file):
         return gzip.open(file, 'rt')
     else:
         return open(file, 'rt')
-
-
-
-def filtering_benchmarks(stats):
-    '''
-    Determine the minimum Phred quality threshold based on read retention.
-
-    :param stats: Dictionary containing the percentage of reads meeting each Phred quality threshold.
-    :return: Dictionary containing the selected minimum Phred threshold.
-    '''
-    benchmarks = {}
-    for i in range(10,19):
-        if stats[i] <= 92:
-            benchmarks['phred'] = i
-            break
-
-    return benchmarks
 
 
 
