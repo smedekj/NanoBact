@@ -4,7 +4,6 @@ from statistics import median
 import csv
 from Bio import SeqIO
 from nanomath import ave_qual
-import os
 
 
 
@@ -37,6 +36,8 @@ def statistics(file, output):
                 if mean_qual >= q:
                     phred_count[q] += 1
 
+    if total_reads == 0:
+        raise ValueError('Input FASTQ file contains no reads')
     mean_length = round(total_length / total_reads, 2)
     median_length = median(lengths)
     N50 = calculate_n50(lengths)
@@ -53,8 +54,8 @@ def statistics(file, output):
         stats[f'Q{q}'] = str(round((phred_count[q] / total_reads) * 100, 2)) + '%'
 
 
-    with open(output / 'statistics.tsv','w', newline='') as file:
-        writer = csv.writer(file, delimiter="\t")
+    with open(output / 'statistics.tsv','w', newline='') as stats_file:
+        writer = csv.writer(stats_file, delimiter="\t")
         writer.writerows(stats.items())
 
 
@@ -68,8 +69,9 @@ def trimming(file, output):
     :return: None. Saves the trimmed reads to a compressed FASTQ file
     '''
 
-    subprocess.run(f'porechop_abi -abi -i {file} -o {output / "sequence_trimmed.fastq.gz"}',
-                    shell=True, check=True)
+    subprocess.run(['porechop_abi', '-abi', '-i', file, '-o', output / 'sequence_trimmed.fastq.gz'],
+        check=True,
+    )
 
 
 

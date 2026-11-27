@@ -1,6 +1,8 @@
 import gzip
+import os
 import shutil
 import sys
+from math import ceil
 from pathlib import Path
 
 
@@ -14,11 +16,15 @@ def arguments_process(commands):
     '''
 
     arguments = {
+        'whole_pipeline': False,
         'file': None,
+        'threads': None,
         'statistics': False,
         'trimming': False,
         'filtering': False,
-        'assembly': False
+        'assembly': False,
+        'assembler': None,
+        'polishing': False
     }
 
     i = 1
@@ -43,10 +49,12 @@ def arguments_process(commands):
                 -h, --help          Display this help message.
 
             Pipeline steps:
-                -s, --statistics    Calculate sequencing statistics.
+                -th, --threads      Number of threads used, Default: Available/2
+                -s, --statistics    Calculate read statistics.
                 -t, --trimming      Trim adapters.
                 -f, --filtering     Filter low-quality reads.
-                -a, --assembly      Perform genome assembly.
+                -a, --assembly      Perform genome assembly. Optionally specify assembler (flye or raven). Default: flye.
+                -p, --polishing     Polishes assembled genome. Works only with assembly
 
             Examples:
                 NanoBact -i sample.fastq.gz
@@ -55,8 +63,8 @@ def arguments_process(commands):
                 NanoBact -i sample.fastq.gz -a
                     Run only genome assembly.
 
-                NanoBact -i sample.fastq.gz -a -s
-                    Run assembly and calculate statistics.
+                NanoBact -i sample.fastq.gz -f -s
+                    Run filtering and calculate statistics.
 
             For more information, visit the NanoBact documentation.
             Github: https://github.com/smedekj/NanoBact
@@ -71,7 +79,7 @@ def arguments_process(commands):
             if arguments['file'] is not None:
                 raise ValueError('Input was specified more than once')
 
-            if i + 1 >= len(commands):
+            if i + 1 >= len(commands) or commands[i+1].startswith('-'):
                 raise ValueError(f"Missing value for {arg}")
 
 
@@ -85,7 +93,7 @@ def arguments_process(commands):
             elif input_path.is_dir():
 
                 fastq_files = []
-                for file in input_path.iterdir():
+                for file in sorted(input_path.iterdir()):
                     if file.is_file() and is_fastq(file):
                         if file.name == 'merged.fastq.gz':
                             continue
@@ -97,7 +105,6 @@ def arguments_process(commands):
                 merged_fastq = input_path / 'merged.fastq.gz'
 
                 with gzip.open(merged_fastq,'wb') as output_file:
-                    print('pred gzip')
                     for fastq in fastq_files:
                         if fastq.name.endswith('.gz'):
                             with gzip.open(fastq, 'rb') as infile:
@@ -105,7 +112,6 @@ def arguments_process(commands):
                         else:
                             with open(fastq, 'rb') as infile:
                                 shutil.copyfileobj(infile, output_file)
-                        print('cykl gzip')
 
                 output_path = merged_fastq
 
@@ -115,6 +121,33 @@ def arguments_process(commands):
             arguments['file'] = output_path
             i += 2
             print(output_path)
+
+        elif arg in ['-th','--threads']:
+            if arguments['threads'] is not None:
+                raise ValueError('Threads was specified more than once')
+
+            if i + 1 >= len(commands) or commands[i+1].startswith('-'):
+                raise ValueError(f"Missing value for {arg}")
+
+            try:
+                threads = int(commands[i + 1])
+            except ValueError:
+                raise ValueError('Threads must be an integer')
+
+            max_threads = (
+                len(os.sched_getaffinity(0))
+                if hasattr(os, 'sched_getaffinity')
+                else (os.cpu_count() or 1)
+            )
+
+            if threads < 1:
+                raise ValueError('Threads must be at least 1')
+
+            if threads > max_threads:
+                raise ValueError(f'Requested more threads than available ({max_threads})')
+
+            arguments['threads'] = threads
+            i += 2
 
 
         elif arg in ['-s','--statistics']:
@@ -146,6 +179,27 @@ def arguments_process(commands):
                 raise ValueError('Assembly was specified more than once')
 
             arguments['assembly'] = True
+            assemblers = ['flye', 'raven']
+
+            if i + 1 >= len(commands) or commands[i+1].startswith('-'):
+                arguments['assembler'] = 'flye'
+
+                i += 1
+
+            else:
+                assembler = commands[i + 1]
+
+                if assembler.lower() in assemblers:
+                    arguments['assembler'] = assembler.lower()
+                    i += 2
+                else:
+                    raise ValueError(f'Assembler "{assembler}" does not exist. Choose from: {assemblers}')
+
+        elif arg in ['-p', '--polishing']:
+            if arguments['polishing'] is True:
+                raise ValueError('Polishing was specified more than once')
+
+            arguments['polishing'] = True
 
             i += 1
 
@@ -156,11 +210,24 @@ def arguments_process(commands):
     if arguments['file'] is None:
         raise ValueError('Input file is required')
 
-    steps = ['statistics', 'trimming', 'filtering', 'assembly']
+    if arguments['polishing'] and not arguments['assembly']:
+        raise ValueError('Polishing works only with assembly')
+
+    steps = ['statistics', 'trimming', 'filtering', 'assembly', 'polishing']
 
     if not any(arguments[step] for step in steps):
         for step in steps:
             arguments[step] = True
+        arguments['whole_pipeline'] = True
+
+    if arguments['threads'] is None:
+        max_threads = (
+            len(os.sched_getaffinity(0))
+            if hasattr(os, 'sched_getaffinity')
+            else (os.cpu_count() or 1)
+        )
+        arguments['threads'] = max(1, ceil(max_threads/2))
+
 
     return arguments
 
